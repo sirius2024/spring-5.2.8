@@ -331,14 +331,18 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 			final InvocationCallback invocation) throws Throwable {
 
 		// If the transaction attribute is null, the method is non-transactional.
-		//获取事务属性解析类 AnnotationTransactionAttributeSource
+		//1.获取事务属性解析类 AnnotationTransactionAttributeSource 获取事务数据源，这里获取的数据源就是在  TransactionInterceptor 注入的时候的设置的属性transactionAttributeSource = AnnotationTransactionAttributeSource.
 		TransactionAttributeSource tas = getTransactionAttributeSource();
-		//获取事务属性 Transaction注解属性
+		//2. 获取对应的事务属性
+		//TransactionAttribute 中包含 传播属性，timeout 等事务属性信息。
+		//如果是使用 @Transactional 注解，这个解析过程是在AnnotationTransactionAttributeSource#findTransactionAttribute(java.lang.reflect.Method) 中完成
 		final TransactionAttribute txAttr = (tas != null ? tas.getTransactionAttribute(method, targetClass) : null);
 		//获取事务管理器  一般采用这种方式: TransactionConfig.annotationDrivenTransactionManager
+		//加载配置中的 TrancationManager, 事务管理器，是事务实现的基础，我们这里获取到的是 DataSourceTransactionManager
 		final TransactionManager tm = determineTransactionManager(txAttr);
 
-		//响应式代码不用看
+		//3. 对于反应式事务的处理
+		// 从Spring Framework 5.2 M2开始，Spring通过ReactiveTransactionManagerSPI 支持响应式/反应式事务管理
 		if (this.reactiveAdapterRegistry != null && tm instanceof ReactiveTransactionManager) {//忽略响应式编程
 			ReactiveTransactionSupport txSupport = this.transactionSupportCache.computeIfAbsent(method, key -> {
 				if (KotlinDetector.isKotlinType(method.getDeclaringClass()) && KotlinDelegate.isSuspend(method)) {
@@ -356,30 +360,36 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 			return txSupport.invokeWithinTransaction(
 					method, targetClass, invocation, txAttr, (ReactiveTransactionManager) tm);
 		}
-		//里面判断事务管理器的类型
+		//里面判断事务管理器的类型  判断 tm是否是 PlatformTransactionManager 类型，是则强转，不是则抛出异常
 		PlatformTransactionManager ptm = asPlatformTransactionManager(tm);
-		//获取joinpoint 也就是方法的名称
+		//获取joinpoint 也就是方法的名称 构造方法的唯一标识( 全路径了类名.方法)
 		final String joinpointIdentification = methodIdentification(method, targetClass, txAttr);
-		//所有注解事务会走这里  核心逻辑 注解事务
+		//4. 对不同事务情景的处理
+		//声明式事务的处理 如果txAttr为空或者tm
+		//属于非CallbackPreferringPlatformTransactionManager，
+		//执行目标增强 在TransactionManager上，CallbackPreferringPlatformTransactionManager实现PlatformTransactionManager接口，暴露出一个方法用于执行事务处理中的回调
 		if (txAttr == null || !(ptm instanceof CallbackPreferringPlatformTransactionManager)) {
 			// Standard transaction demarcation with getTransaction and commit/rollback calls.
-			//开启事务 核心代码
+			//5.如果有必要，创建事务信息。主要由于事务的传播属性，所以这里并不一定会创建事务 事务的创建 - createTransactionIfNecessary
 			TransactionInfo txInfo = createTransactionIfNecessary(ptm, txAttr, joinpointIdentification);
 
 			Object retVal;
 			try {
 				// This is an around advice: Invoke the next interceptor in the chain.
 				// This will normally result in a target object being invoked.
-				//火炬传递 调用被代理方法 匿名对那里
+				//6. 执行被增强的方法
 				retVal = invocation.proceedWithInvocation();
 			}
 			catch (Throwable ex) {
 				// target invocation exception
-				//事务回滚
+				//7. 异常回滚 如果出现异常，则进行回滚。
+				//事务的回滚 - completeTransactionAfterThrowing
+				//这里需要注意，默认的情况下只有 RuntimeException 异常才会执行回滚。可以通过 @Transactional(rollbackFor = Exception.class) 的方式来指定触发回滚的异常
 				completeTransactionAfterThrowing(txInfo, ex);
 				throw ex;
 			}
 			finally {
+				//8. 提交之前清除事务信息
 				cleanupTransactionInfo(txInfo);
 			}
 
@@ -391,20 +401,24 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 				}
 			}
 
-			//事务提交
+			//9.事务的提交 - commitTransactionAfterReturning
 			commitTransactionAfterReturning(txInfo);
 			return retVal;
 		}
 
 		else {
+			// 编程式事务(CallbackPreferringPlatformTransactionManager)的处理。这里的逻辑基本都被封装了
 			Object result;
 			final ThrowableHolder throwableHolder = new ThrowableHolder();
 
 			// It's a CallbackPreferringPlatformTransactionManager: pass a TransactionCallback in.
 			try {
+				// 直接调用execute 方法。由于事务的提交回滚等操作都已经封装好了，所以这里并没有对事务进行详细的操作。
 				result = ((CallbackPreferringPlatformTransactionManager) ptm).execute(txAttr, status -> {
+					// 准备事务信息
 					TransactionInfo txInfo = prepareTransactionInfo(ptm, txAttr, joinpointIdentification, status);
 					try {
+						// 执行方法
 						Object retVal = invocation.proceedWithInvocation();
 						if (retVal != null && vavrPresent && VavrDelegate.isVavrTry(retVal)) {
 							// Set rollback-only in case of Vavr failure matching our rollback rules...
@@ -429,6 +443,7 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 						}
 					}
 					finally {
+						// 清除事务信息
 						cleanupTransactionInfo(txInfo);
 					}
 				});
