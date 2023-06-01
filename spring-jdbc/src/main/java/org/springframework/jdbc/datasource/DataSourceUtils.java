@@ -231,7 +231,7 @@ public abstract class DataSourceUtils {
 	 */
 	public static void resetConnectionAfterTransaction(
 			Connection con, @Nullable Integer previousIsolationLevel, boolean resetReadOnly) {
-
+		// resetConnectionAfterTransaction方法负责重置数据库连接信息，包括隔离级别、readOnly属性。
 		Assert.notNull(con, "No Connection specified");
 		boolean debugEnabled = logger.isDebugEnabled();
 		try {

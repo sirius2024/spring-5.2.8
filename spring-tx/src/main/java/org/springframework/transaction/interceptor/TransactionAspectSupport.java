@@ -657,6 +657,7 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 			if (logger.isTraceEnabled()) {
 				logger.trace("Completing transaction for [" + txInfo.getJoinpointIdentification() + "]");
 			}
+			// 提交事务
 			txInfo.getTransactionManager().commit(txInfo.getTransactionStatus());
 		}
 	}
@@ -668,12 +669,14 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 	 * @param ex throwable encountered
 	 */
 	protected void completeTransactionAfterThrowing(@Nullable TransactionInfo txInfo, Throwable ex) {
+		// 判断当前是否存在事务
 		if (txInfo != null && txInfo.getTransactionStatus() != null) {
 			if (logger.isTraceEnabled()) {
 				logger.trace("Completing transaction for [" + txInfo.getJoinpointIdentification() +
 						"] after exception: " + ex);
 			}
-			//判断事务回滚类型
+			//判断事务回滚类型         
+			//判断是否满足回滚条件
 			if (txInfo.transactionAttribute != null && txInfo.transactionAttribute.rollbackOn(ex)) {
 				try {
 					//执行事务回滚
@@ -692,7 +695,7 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 			else {
 				// We don't roll back on this exception.
 				// Will still roll back if TransactionStatus.isRollbackOnly() is true.
-				try {
+				try {                // 如果不满足回滚条件出现异常也会继续提交
 					txInfo.getTransactionManager().commit(txInfo.getTransactionStatus());
 				}
 				catch (TransactionSystemException ex2) {
@@ -709,12 +712,13 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 	}
 
 	/**
-	 * Reset the TransactionInfo ThreadLocal.
+	 * Reset the TransactionInfo ThreadLocal.  cleanupTransactionInfo方法清除当前节点的事务信息，将旧事务节点信息通过 threadLocal 更新到当前线程。
 	 * <p>Call this in all cases: exception or normal return!
 	 * @param txInfo information about the current transaction (may be {@code null})
 	 */
 	protected void cleanupTransactionInfo(@Nullable TransactionInfo txInfo) {
 		if (txInfo != null) {
+			// 从当前线程的 ThreadLocal 获取上层的事务信息，将当前事务出栈，继续执行上层事务
 			txInfo.restoreThreadLocalStatus();
 		}
 	}
@@ -793,6 +797,7 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 		private void restoreThreadLocalStatus() {
 			// Use stack to restore old transaction TransactionInfo.
 			// Will be null if none was set.
+			// 当前事务处理完之后，恢复上层事务上下文
 			transactionInfoHolder.set(this.oldTransactionInfo);
 		}
 
