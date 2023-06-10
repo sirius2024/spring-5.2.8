@@ -378,6 +378,10 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 		}
 	}
 
+	/**
+	 * 设置回滚标记
+	 * @param status the status representation of the transaction
+	 */
 	@Override
 	protected void doSetRollbackOnly(DefaultTransactionStatus status) {
 		DataSourceTransactionObject txObject = (DataSourceTransactionObject) status.getTransaction();
@@ -385,6 +389,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 			logger.debug("Setting JDBC transaction [" + txObject.getConnectionHolder().getConnection() +
 					"] rollback-only");
 		}
+		//DataSourceTransactionObject 的setRollbackOnly设置回滚标记
 		txObject.setRollbackOnly();
 	}
 
