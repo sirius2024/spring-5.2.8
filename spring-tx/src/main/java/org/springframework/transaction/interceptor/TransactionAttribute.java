@@ -41,6 +41,11 @@ public interface TransactionAttribute extends TransactionDefinition {
 	@Nullable
 	String getQualifier();
 
+	@Override
+	default int getPropagationBehavior() {
+		return 0;
+	}
+
 	/**
 	 * Should we roll back on the given exception?
 	 * @param ex the exception to evaluate

@@ -639,10 +639,11 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 			//获取挂起事务
 			Object suspendedResources = resourcesHolder.suspendedResources;
 			if (suspendedResources != null) {
-				//恢复             // 恢复挂起事务  doResume方法重新绑定数据库连接与挂起的事务。
+				// 恢复挂起资源
 				doResume(transaction, suspendedResources);
 			}
 			List<TransactionSynchronization> suspendedSynchronizations = resourcesHolder.suspendedSynchronizations;
+			// 恢复挂起的事物同步回调接口
 			if (suspendedSynchronizations != null) {
 				TransactionSynchronizationManager.setActualTransactionActive(resourcesHolder.wasActive);
 				TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(resourcesHolder.isolationLevel);
@@ -842,14 +843,15 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 	 */
 	@Override
 	public final void rollback(TransactionStatus status) throws TransactionException {
-		// 如果事务状态已经是完成，回滚会抛出异常
+		// 首先判断当前事务是否已经完成，如果已经完成则属于异常，否则继续执行processRollback开始回滚。
+		//如果事务状态已经是完成，回滚会抛出异常
 		if (status.isCompleted()) {
 			throw new IllegalTransactionStateException(
 					"Transaction is already completed - do not call commit or rollback more than once per transaction");
 		}
 
 		DefaultTransactionStatus defStatus = (DefaultTransactionStatus) status;
-		//执行事务回滚
+		// 执行回滚
 		processRollback(defStatus, false);
 	}
 
@@ -864,17 +866,16 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 		try {
 			boolean unexpectedRollback = unexpected;
 			try {
-				//解绑线程和会话绑定关系
+				// 1.事物完成之前的触发器调用
 				triggerBeforeCompletion(status);
-				//如果有回滚点，如果是嵌套事务 如果有保存点，也就是当前事务为单独的线程则会退到保存点
-				if (status.hasSavepoint()) {//如果有安全点，回滚至安全点
+				// 如果有保存点，也就是当前事务为单独的线程则会退到保存点 如果有保存点,则调用rollbackToHeldSavepoint回滚
+				if (status.hasSavepoint()) {
 					if (status.isDebug()) {
 						logger.debug("Rolling back transaction to savepoint");
 					}
-					// 和上文的doRollback类似，只不过这里多了一个保存点的限制，事务不是全部回滚的而是回滚到保存点即可。
 					status.rollbackToHeldSavepoint();
 				}
-				//如果是新事务，newTransaction 为true的情况下才回滚
+				// 3.如果当前事物是一个新的事物,则调用doRollback执行给定事物的回滚
 				else if (status.isNewTransaction()) {
 					if (status.isDebug()) {
 						logger.debug("Initiating transaction rollback");
@@ -884,12 +885,19 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 				}
 				else {
 					// Participating in larger transaction
-					if (status.hasTransaction()) {//如果有事务但不是新事务，则把标记事务状态，等事务链执行完毕后统一回滚
+					// 4.如果当前事物并非独立事物,则将当前事物的rollbackOnly属性标记为true,等到事物链完成之后,一起执行回滚
+					// 如果当前存在事物,但是
+					// 事物的rollbackOnly属性已经被标记为true
+					// 或者globalRollbackOnParticipationFailure(返回是否仅在参与事务失败后才将现有事务全局标记为回滚)为true
+					if (status.hasTransaction()) {
+						//如果有事务但不是新事务，则把标记事务状态，等事务链执行完毕后统一回滚
 						if (status.isLocalRollbackOnly() || isGlobalRollbackOnParticipationFailure()) {
 							if (status.isDebug()) {
 								logger.debug("Participating transaction failed - marking existing transaction as rollback-only");
 							}
-							// 如果当前事务不是独立的事务，则只能等待事务链执行完成之后再做回滚操作
+							//  doSetRollbackOnly作用在于人工的设置了回滚标志，不会继续向上抛出异常但是在事务链执行完后进行回滚。
+							System.out.println("==当前事物并非独立事物,且RollbackOnly为true\n");
+							// 则将ConnectionHolder中的rollbackOnly标记为true
 							doSetRollbackOnly(status);
 						}
 						else {
@@ -899,6 +907,8 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 						}
 					}
 					else {
+						// 5.如果当前不存在事物,则不会回滚
+						// 例如配置了 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 						logger.debug("Should roll back transaction but cannot - no transaction available");
 					}
 					// Unexpected rollback only matters here if we're asked to fail early
@@ -913,6 +923,7 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 			}
 
 			// 关闭会话工厂，关闭会话，重置属性
+			// 6.事物完成之后的触发器调用
 			triggerAfterCompletion(status, TransactionSynchronization.STATUS_ROLLED_BACK);
 
 			// Raise UnexpectedRollbackException if we had a global rollback-only marker
@@ -922,8 +933,7 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 			}
 		}
 		finally {
-			// 清理并恢复挂起的事务
-			//清空记录的资源并将挂起的资源恢复
+			//7.事物完成后清理资源
 			cleanupAfterCompletion(status);
 		}
 	}
@@ -1042,24 +1052,25 @@ public abstract class AbstractPlatformTransactionManager implements PlatformTran
 	}
 
 	/**
+	 * 恢复挂起事物
 	 * Clean up after completion, clearing synchronization if necessary,
 	 * and invoking doCleanupAfterCompletion.
 	 * @param status object representing the transaction
 	 * @see #doCleanupAfterCompletion
 	 */
 	private void cleanupAfterCompletion(DefaultTransactionStatus status) {
-		// 将当前事务状态设置为完成
+		// 1.将当前事物状态标记为已完成
 		status.setCompleted();
+		// 2.清除synchronization
 		if (status.isNewSynchronization()) {
-			// 清空当前事务信息
 			TransactionSynchronizationManager.clear();
 		}
-		//释放连接
+		// 3.事务完成后清理资源。
 		if (status.isNewTransaction()) {
 			// 新事务在事务完成之后做清理操作
 			doCleanupAfterCompletion(status.getTransaction());
 		}
-		//如果存在挂起的事务
+		// 4.从嵌套事物中恢复被挂起的资源
 		if (status.getSuspendedResources() != null) {
 			if (status.isDebug()) {
 				logger.debug("Resuming suspended transaction after completion of inner transaction");

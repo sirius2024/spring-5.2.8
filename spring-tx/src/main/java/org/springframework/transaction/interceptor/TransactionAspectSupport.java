@@ -370,26 +370,24 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 		//执行目标增强 在TransactionManager上，CallbackPreferringPlatformTransactionManager实现PlatformTransactionManager接口，暴露出一个方法用于执行事务处理中的回调
 		if (txAttr == null || !(ptm instanceof CallbackPreferringPlatformTransactionManager)) {
 			// Standard transaction demarcation with getTransaction and commit/rollback calls.
-			//5.如果有必要，创建事务信息。主要由于事务的传播属性，所以这里并不一定会创建事务 事务的创建 - createTransactionIfNecessary
+			// 创建事务，事务属性等信息会被保存进TransactionInfo中
 			TransactionInfo txInfo = createTransactionIfNecessary(ptm, txAttr, joinpointIdentification);
 
 			Object retVal;
 			try {
 				// This is an around advice: Invoke the next interceptor in the chain.
 				// This will normally result in a target object being invoked.
-				//6. 执行被增强的方法
+				//6. 执行目标方法
 				retVal = invocation.proceedWithInvocation();
 			}
 			catch (Throwable ex) {
 				// target invocation exception
-				//7. 异常回滚 如果出现异常，则进行回滚。
-				//事务的回滚 - completeTransactionAfterThrowing
-				//这里需要注意，默认的情况下只有 RuntimeException 异常才会执行回滚。可以通过 @Transactional(rollbackFor = Exception.class) 的方式来指定触发回滚的异常
+				//7. 异常处理
 				completeTransactionAfterThrowing(txInfo, ex);
 				throw ex;
 			}
 			finally {
-				//8. 提交之前清除事务信息
+				//8. 提交之前清空事务信息
 				cleanupTransactionInfo(txInfo);
 			}
 
@@ -653,6 +651,7 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 	 * @param txInfo information about the current transaction
 	 */
 	protected void commitTransactionAfterReturning(@Nullable TransactionInfo txInfo) {
+		// 和回滚一样，先判断有无事务后再做提交操作。
 		if (txInfo != null && txInfo.getTransactionStatus() != null) {
 			if (logger.isTraceEnabled()) {
 				logger.trace("Completing transaction for [" + txInfo.getJoinpointIdentification() + "]");
@@ -669,14 +668,13 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 	 * @param ex throwable encountered
 	 */
 	protected void completeTransactionAfterThrowing(@Nullable TransactionInfo txInfo, Throwable ex) {
-		// 判断当前是否存在事务
+		// 首先判断事务与事务属性是否存在，如果不存在自然也不需要回滚。如果存在则继续判断是否满足回滚的条件满足的话则调用rollback方法进行回滚。
 		if (txInfo != null && txInfo.getTransactionStatus() != null) {
 			if (logger.isTraceEnabled()) {
 				logger.trace("Completing transaction for [" + txInfo.getJoinpointIdentification() +
 						"] after exception: " + ex);
 			}
-			//判断事务回滚类型         
-			//判断是否满足回滚条件
+			// 判断是否满足回滚条件
 			if (txInfo.transactionAttribute != null && txInfo.transactionAttribute.rollbackOn(ex)) {
 				try {
 					//执行事务回滚
@@ -695,7 +693,8 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 			else {
 				// We don't roll back on this exception.
 				// Will still roll back if TransactionStatus.isRollbackOnly() is true.
-				try {                // 如果不满足回滚条件出现异常也会继续提交
+				try {
+					// 如果不满足回滚条件出现异常也会继续提交
 					txInfo.getTransactionManager().commit(txInfo.getTransactionStatus());
 				}
 				catch (TransactionSystemException ex2) {
