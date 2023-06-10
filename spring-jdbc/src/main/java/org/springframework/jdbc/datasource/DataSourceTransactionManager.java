@@ -236,8 +236,13 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 
 	@Override
 	protected Object doGetTransaction() {
+		// DataSourceTransactionObject封装着数据库连接、previousIsolationLevel、readOnly、savepointAllowed等
 		DataSourceTransactionObject txObject = new DataSourceTransactionObject();
+		// 是否允许设置保存点，NESTED传播级别时使用，DataSourceTransactionManager类型该属性为true
 		txObject.setSavepointAllowed(isNestedTransactionAllowed());
+		// 从ThreadLocal获取当前线程上绑定的ConnectionHolder
+		// ConnectionHolder对象保存着数据库连接
+		// 业务方法第一次执行时为null
 		//这个代码是从ThreadLocal中获取到连接对象
 		ConnectionHolder conHolder = (ConnectionHolder) TransactionSynchronizationManager.getResource(obtainDataSource());
 		txObject.setConnectionHolder(conHolder, false);
@@ -248,6 +253,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 	protected boolean isExistingTransaction(Object transaction) {
 		DataSourceTransactionObject txObject = (DataSourceTransactionObject) transaction;
 		//如果事务对象中有连接且是active的，则说明之前存在事务
+		// 判断存在数据库连接且开启了事务
 		return (txObject.hasConnectionHolder() && txObject.getConnectionHolder().isTransactionActive());
 	}
 
@@ -261,6 +267,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 			//如果事务对象中没连接对象 第一个要创建
 			if (!txObject.hasConnectionHolder() || txObject.getConnectionHolder().isSynchronizedWithTransaction()) {
 				//事务管理器中拿dataSource对象，从dataSource中拿连接对象 。。这里可能是AbstractRoutingDataSource的数据源
+				// 打开一个新连接
 				Connection newCon = obtainDataSource().getConnection();
 				if (logger.isDebugEnabled()) {
 					logger.debug("Acquired Connection [" + newCon + "] for JDBC transaction");
@@ -289,6 +296,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 					logger.debug("Switching JDBC Connection [" + con + "] to manual commit");
 				}
 				//把自动提交关闭，因为提交要交给spring来做
+				// 设置手动提交
 				con.setAutoCommit(false);
 			}
 
@@ -328,6 +336,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 
 	@Override
 	protected void doResume(@Nullable Object transaction, Object suspendedResources) {
+		// 恢复之前挂起的是ConnectionHolder对象
 		TransactionSynchronizationManager.bindResource(obtainDataSource(), suspendedResources);
 	}
 

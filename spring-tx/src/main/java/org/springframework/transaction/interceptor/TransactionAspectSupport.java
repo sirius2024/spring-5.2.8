@@ -332,16 +332,25 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 
 		// If the transaction attribute is null, the method is non-transactional.
 		//1.获取事务属性解析类 AnnotationTransactionAttributeSource 获取事务数据源，这里获取的数据源就是在  TransactionInterceptor 注入的时候的设置的属性transactionAttributeSource = AnnotationTransactionAttributeSource.
+		// 如果方法没有被Transactional注解标注，则返回null
+		// 返回的是AnnotationTransactionAttributeSource对象
+		// 用于获取Transactional注解相关属性，
+		// 比如rollbackOn, propagationBehavior, isolationLevel等
 		TransactionAttributeSource tas = getTransactionAttributeSource();
+
 		//2. 获取对应的事务属性
 		//TransactionAttribute 中包含 传播属性，timeout 等事务属性信息。
 		//如果是使用 @Transactional 注解，这个解析过程是在AnnotationTransactionAttributeSource#findTransactionAttribute(java.lang.reflect.Method) 中完成
 		final TransactionAttribute txAttr = (tas != null ? tas.getTransactionAttribute(method, targetClass) : null);
+
+		// 获取事务管理器
+		// 后面会转型成PlatformTransactionManager对象，可以开启事务、提交、回滚
 		//获取事务管理器  一般采用这种方式: TransactionConfig.annotationDrivenTransactionManager
 		//加载配置中的 TrancationManager, 事务管理器，是事务实现的基础，我们这里获取到的是 DataSourceTransactionManager
 		final TransactionManager tm = determineTransactionManager(txAttr);
 
 		//3. 对于反应式事务的处理
+		// Reactive事务
 		// 从Spring Framework 5.2 M2开始，Spring通过ReactiveTransactionManagerSPI 支持响应式/反应式事务管理
 		if (this.reactiveAdapterRegistry != null && tm instanceof ReactiveTransactionManager) {//忽略响应式编程
 			ReactiveTransactionSupport txSupport = this.transactionSupportCache.computeIfAbsent(method, key -> {
@@ -360,10 +369,16 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 			return txSupport.invokeWithinTransaction(
 					method, targetClass, invocation, txAttr, (ReactiveTransactionManager) tm);
 		}
+
+		// 转型成PlatformTransactionManager对象，可以开启事务、提交、回滚
 		//里面判断事务管理器的类型  判断 tm是否是 PlatformTransactionManager 类型，是则强转，不是则抛出异常
 		PlatformTransactionManager ptm = asPlatformTransactionManager(tm);
+
 		//获取joinpoint 也就是方法的名称 构造方法的唯一标识( 全路径了类名.方法)
+		// 获取事务方法的唯一标识
+		// 格式为"类名.方法名"
 		final String joinpointIdentification = methodIdentification(method, targetClass, txAttr);
+
 		//4. 对不同事务情景的处理
 		//声明式事务的处理 如果txAttr为空或者tm
 		//属于非CallbackPreferringPlatformTransactionManager，
@@ -595,6 +610,8 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 		if (txAttr != null) {
 			if (tm != null) {
 				//开启事务，这里重点看
+				// 创建新事务或者返回已存在事务, 这取决于传播级别。
+				// 隔离级别或超时等参数只在新事务时生效，已存在事务会忽略这些参数。
 				status = tm.getTransaction(txAttr);
 			}
 			else {
@@ -604,6 +621,8 @@ public abstract class TransactionAspectSupport implements BeanFactoryAware, Init
 				}
 			}
 		}
+
+		// 使用指定的事务属性和TransactionStatus创建TransactionInfo
 		//创建事务信息对象，记录新老事务信息对象 准备事务信息
 		return prepareTransactionInfo(tm, txAttr, joinpointIdentification, status);
 	}

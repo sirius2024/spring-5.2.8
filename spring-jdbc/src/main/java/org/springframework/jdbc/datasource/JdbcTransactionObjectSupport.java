@@ -157,6 +157,7 @@ public abstract class JdbcTransactionObjectSupport implements SavepointManager, 
 				throw new CannotCreateTransactionException(
 						"Cannot create savepoint for transaction which is already marked as rollback-only");
 			}
+			// 使用jdbc设置保存点
 			return conHolder.createSavepoint();
 		}
 		catch (SQLException ex) {
